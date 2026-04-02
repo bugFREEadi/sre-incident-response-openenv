@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-sre-incident-response"
+version = "0.1.0"
+description = "OpenEnv benchmark for causal SRE incident diagnosis and remediation"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "openai",
+    "openenv-core[core]",
+    "uvicorn",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+server = "server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["scenarios", "server", "sre_incident_env"]
+py-modules = ["actions", "models", "observation", "reward", "verifier", "world"]
+
+[tool.setuptools.package-dir]
+scenarios = "scenarios"
+server = "server"
+sre_incident_env = "sre_incident_env"
