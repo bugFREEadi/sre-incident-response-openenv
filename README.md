@@ -35,6 +35,10 @@ Primary docs:
 - [docs/api_reference.md](/Volumes/macSSD/git/meta-hackathon-sst/docs/api_reference.md)
 - [docs/deployment_guide.md](/Volumes/macSSD/git/meta-hackathon-sst/docs/deployment_guide.md)
 
+Environment templates:
+
+- [.env.example](/Volumes/macSSD/git/meta-hackathon-sst/.env.example) for a detailed starter configuration
+
 That guide covers:
 
 - how the simulator maps to real incident-response workflows
