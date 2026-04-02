@@ -1,3 +1,5 @@
 fastapi>=0.122.0,<1.0.0
+httpx>=0.28.0,<1.0.0
 openenv-core[core]>=0.2.2
+psycopg[binary]>=3.2.0,<4.0.0
 uvicorn>=0.30.0,<1.0.0

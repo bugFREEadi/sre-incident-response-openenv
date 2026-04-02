@@ -27,7 +27,13 @@ The killer case is Scenario 1: `payments-api` looks sick, but restarting it make
 
 ## Production Guide
 
-For a full implementation and integration guide, see [docs/production_guide.md](/Volumes/macSSD/git/meta-hackathon-sst/docs/production_guide.md).
+For the full documentation set, start at [docs/README.md](/Volumes/macSSD/git/meta-hackathon-sst/docs/README.md).
+
+Primary docs:
+
+- [docs/production_guide.md](/Volumes/macSSD/git/meta-hackathon-sst/docs/production_guide.md)
+- [docs/api_reference.md](/Volumes/macSSD/git/meta-hackathon-sst/docs/api_reference.md)
+- [docs/deployment_guide.md](/Volumes/macSSD/git/meta-hackathon-sst/docs/deployment_guide.md)
 
 That guide covers:
 
@@ -60,10 +66,17 @@ That guide covers:
 │   └── client.py                 # OpenEnv EnvClient
 ├── server/
 │   ├── app.py                    # OpenEnv FastAPI entrypoint
+│   ├── ops_adapters.py           # read-only telemetry + remediation adapters
+│   ├── ops_auth.py               # bearer-token auth and role checks
+│   ├── ops_config.py             # env-driven control-plane configuration
+│   ├── ops_models.py             # control-plane request/response models
+│   ├── ops_service.py            # advisory mode, approvals, drills, guardrails
+│   ├── ops_store.py              # sqlite-backed approvals + audit persistence
 │   └── sre_incident_environment.py
 ├── scripts/
 │   └── validate_policies.py
 ├── tests/
+│   ├── test_ops_control_plane.py
 │   └── test_scenarios.py
 └── Dockerfile
 ```
@@ -220,6 +233,23 @@ Endpoints:
 - `GET /metadata`
 - `POST /mcp`
 
+Production control-plane endpoints:
+
+- `GET /ops/v1/status`
+- `GET /ops/v1/logs`
+- `GET /ops/v1/metrics`
+- `GET /ops/v1/deploy-history`
+- `GET /ops/v1/topology`
+- `POST /ops/v1/advisories/preview`
+- `POST /ops/v1/approvals`
+- `POST /ops/v1/approvals/{approval_id}/approve`
+- `POST /ops/v1/approvals/{approval_id}/reject`
+- `POST /ops/v1/actions/execute`
+- `GET /ops/v1/audit`
+- `POST /ops/v1/drills/run`
+- `GET /ops/v1/drills/latest`
+- `POST /ops/v1/mode`
+
 Example flow:
 
 ```bash
@@ -253,10 +283,136 @@ In practice that usually means:
 
 The detailed rollout pattern, API examples, and integration code live in [docs/production_guide.md](/Volumes/macSSD/git/meta-hackathon-sst/docs/production_guide.md).
 
+## Ops Control Plane
+
+The server now includes a production-safety shell around the benchmark:
+
+- read-only adapters for real logs, metrics, deploy history, and topology
+- advisory previews before any real mutation
+- approval gates before remediation execution
+- bearer-token auth with role checks
+- tenant-aware audit and approval persistence
+- sqlite by default and Postgres when `OPS_DATABASE_URL` is configured
+- allowlists and action guardrails
+- policy-rule enforcement for service, tenant, role, time window, replica caps, and rate caps
+- execution records plus webhook verification polling for remediation orchestration
+- admin backup export and rate-limited privileged routes
+- drill-gated execution mode changes
+
+Execution modes:
+
+- `advisory_only`: default and safest mode; actions can be previewed and approved, but not executed
+- `approval_required`: approved actions can be executed through the remediation adapter
+- `enabled`: same approval discipline, but intended for tightly controlled automation flows after passing drills
+
+Current built-in adapter support:
+
+- logs: Loki
+- metrics: Prometheus
+- deploy history: ArgoCD
+- topology: static JSON file or generic HTTP endpoint
+- remediation execution: generic webhook adapter
+
+Recommended production rollout:
+
+1. Configure only the read-only adapters first.
+2. Keep `OPS_EXECUTION_MODE=advisory_only`.
+3. Require human approvals for all mutating actions.
+4. Run internal drills and confirm passing scores.
+5. Only then move to `approval_required` or `enabled`.
+
+### Ops Environment Variables
+
+Auth and execution control:
+
+- `OPS_API_TOKENS_JSON`
+- `OPS_REQUIRE_AUTH`
+- `OPS_DISABLE_AUTH_FOR_LOCAL_DEV`
+- `OPS_EXECUTION_MODE`
+- `OPS_APPROVAL_REQUIRED_FOR_MUTATIONS`
+- `OPS_DRILL_GATE_ENABLED`
+- `OPS_DRILL_VALIDITY_HOURS`
+- `OPS_ALLOWED_SERVICES`
+- `OPS_ALLOWED_MUTATING_ACTIONS`
+- `OPS_MAX_SCALE_REPLICAS`
+- `OPS_MAX_RATE_LIMIT_RPS`
+
+Persistence:
+
+- `OPS_DATABASE_PATH`
+- `OPS_DATABASE_URL`
+- `OPS_AUDIT_JSONL_PATH`
+
+Read-only adapters:
+
+- `OPS_LOKI_BASE_URL`
+- `OPS_LOKI_BEARER_TOKEN`
+- `OPS_LOKI_QUERY_TEMPLATE`
+- `OPS_PROMETHEUS_BASE_URL`
+- `OPS_PROMETHEUS_BEARER_TOKEN`
+- `OPS_PROMETHEUS_QUERY_TEMPLATE`
+- `OPS_ARGOCD_BASE_URL`
+- `OPS_ARGOCD_BEARER_TOKEN`
+- `OPS_TOPOLOGY_FILE`
+- `OPS_TOPOLOGY_URL`
+- `OPS_TOPOLOGY_BEARER_TOKEN`
+
+Remediation adapter:
+
+- `OPS_REMEDIATION_WEBHOOK_URL`
+- `OPS_REMEDIATION_BEARER_TOKEN`
+- `OPS_REMEDIATION_STATUS_URL_TEMPLATE`
+- `OPS_REMEDIATION_VERIFY_ATTEMPTS`
+- `OPS_REMEDIATION_VERIFY_DELAY_SECONDS`
+
+Policy and hardening:
+
+- `OPS_POLICY_RULES_JSON`
+- `OPS_ADMIN_RATE_LIMIT_COUNT`
+- `OPS_ADMIN_RATE_LIMIT_WINDOW_SECONDS`
+
+Secret resolution:
+
+- any token-like config can be passed directly
+- or via `file:///path/to/secret`
+- or via `env://ENV_VAR_NAME`
+
+Example token config:
+
+```bash
+export OPS_API_TOKENS_JSON='{
+  "viewer-token": {"actor_id": "viewer", "roles": ["viewer"]},
+  "operator-token": {"actor_id": "operator", "roles": ["operator"]},
+  "approver-token": {"actor_id": "incident-commander", "roles": ["approver"]},
+  "admin-token": {"actor_id": "platform-admin", "roles": ["admin"]}
+}'
+```
+
+Example policy config:
+
+```bash
+export OPS_POLICY_RULES_JSON='[
+  {
+    "rule_id": "protect-checkout-scale",
+    "services": ["checkout-api"],
+    "action_types": ["scale_service"],
+    "max_replicas": 4
+  },
+  {
+    "rule_id": "block-night-rollbacks",
+    "action_types": ["rollback_service"],
+    "active_from_hour_utc": 0,
+    "active_to_hour_utc": 5,
+    "deny": true
+  }
+]'
+```
+
 ## Notes
 
 - The environment is deterministic at the simulation layer; observation sampling uses seeded noise from the episode id and tick.
 - The implementation intentionally stays small: 4 services per scenario, 5 incident families, 8 typed actions, and deterministic grading.
 - The benchmark now ships as a real OpenEnv package instead of only a custom FastAPI app.
+- The ops control plane is intended as a safe adoption layer, not a license to grant broad production mutation rights immediately.
 - `openenv validate .` and `openenv validate --url ...` both pass locally.
 - `docker build .` could not be exercised in this session because the local Docker daemon socket was unavailable, even though the CLI itself is installed.

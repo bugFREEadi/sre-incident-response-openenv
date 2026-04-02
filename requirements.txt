@@ -1,4 +1,6 @@
 fastapi>=0.122.0,<1.0.0
+httpx>=0.28.0,<1.0.0
 openai>=2.7.2,<3.0.0
 openenv-core[core]
+psycopg[binary]>=3.2.0,<4.0.0
 uvicorn>=0.30.0,<1.0.0

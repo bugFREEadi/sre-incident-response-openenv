@@ -14,6 +14,7 @@ At a high level:
 - `POST /step` accepts one typed action and advances the world by one tick.
 - `GET /state` returns the current episode state.
 - `GET /health`, `GET /metadata`, and `GET /schema` support validation and tooling.
+- `GET /ops/v1/*` and `POST /ops/v1/*` expose the production-safety control plane.
 
 The environment is designed around a production truth that many agents get wrong:
 
@@ -38,6 +39,48 @@ It should be used as:
 - a prompt and policy evaluation harness
 - a rehearsal system for incident agents
 - a safe stand-in for live production tools
+
+## Production-Safety Control Plane
+
+This repository now includes an ops control plane layered onto the same FastAPI server.
+
+Implemented capabilities:
+
+- read-only adapters for logs, metrics, deploy history, and topology
+- advisory previews for mutating actions
+- approval requests and explicit approve or reject flows
+- bearer-token authentication with role checks
+- tenant-aware audit logs and approval persistence
+- sqlite by default and Postgres when `OPS_DATABASE_URL` is set
+- service and action allowlists
+- action guardrails for scale and traffic limits
+- policy rules for tenant, role, action, service, and UTC time-window enforcement
+- execution records and verification-aware remediation orchestration
+- admin backup export and rate-limited privileged routes
+- drill-gated mode changes before enabling automation
+
+This gives you a practical bridge between:
+
+- a pure benchmark
+- a read-only incident assistant
+- a tightly controlled remediation workflow
+
+### Execution Modes
+
+The control plane supports three modes:
+
+- `advisory_only`
+  - default mode
+  - mutations cannot be executed
+  - agents can preview actions and request approvals
+- `approval_required`
+  - approved actions can be executed through the remediation adapter
+  - intended for human-in-the-loop operations
+- `enabled`
+  - still approval-gated in this implementation
+  - intended for carefully automated workflows after drills pass
+
+The mode cannot move out of `advisory_only` unless a recent passing drill run exists when the drill gate is enabled.
 
 ## Mental Model
 
@@ -112,6 +155,28 @@ This is a deliberate design choice. It lets the verifier distinguish:
 - decision quality
 
 Without that separation, an agent that blindly restarts or rate-limits services could appear stronger than it really is.
+
+## Ops API Surface
+
+Beyond the OpenEnv simulator routes, the server now exposes production control-plane routes:
+
+- `GET /ops/v1/status`
+- `GET /ops/v1/logs`
+- `GET /ops/v1/metrics`
+- `GET /ops/v1/deploy-history`
+- `GET /ops/v1/topology`
+- `POST /ops/v1/advisories/preview`
+- `POST /ops/v1/approvals`
+- `GET /ops/v1/approvals/{approval_id}`
+- `POST /ops/v1/approvals/{approval_id}/approve`
+- `POST /ops/v1/approvals/{approval_id}/reject`
+- `POST /ops/v1/actions/execute`
+- `GET /ops/v1/audit`
+- `POST /ops/v1/drills/run`
+- `GET /ops/v1/drills/latest`
+- `POST /ops/v1/mode`
+
+These routes live in [server/app.py](/Volumes/macSSD/git/meta-hackathon-sst/server/app.py) and are backed by [server/ops_service.py](/Volumes/macSSD/git/meta-hackathon-sst/server/ops_service.py).
 
 ## Action Contract
 
@@ -432,6 +497,269 @@ curl -X POST http://127.0.0.1:8000/step \
 curl http://127.0.0.1:8000/state?episode_id=s01_restart_cascade-1234abcd
 ```
 
+## How To Use The Ops Control Plane
+
+### 1. Configure Auth
+
+The control plane expects bearer tokens defined through `OPS_API_TOKENS_JSON`.
+
+Example:
+
+```bash
+export OPS_API_TOKENS_JSON='{
+  "viewer-token": {"actor_id": "viewer", "roles": ["viewer"]},
+  "operator-token": {"actor_id": "oncall-operator", "roles": ["operator"]},
+  "approver-token": {"actor_id": "incident-commander", "roles": ["approver"]},
+  "admin-token": {"actor_id": "platform-admin", "roles": ["admin"]}
+}'
+```
+
+Role intent:
+
+- `viewer`: read-only telemetry and status
+- `operator`: advisory previews, approval requests, execution attempts
+- `approver`: approve or reject actions, review audit history
+- `admin`: run drills and change execution mode
+
+Tenant isolation:
+
+- every control-plane request is scoped by `X-Tenant-Id`
+- tokens can only access tenants listed in `allowed_tenants`
+- approvals, audit events, drill results, executions, and settings are stored per tenant
+
+### 2. Configure Read-Only Adapters
+
+Supported adapter configuration:
+
+#### Loki logs
+
+```bash
+export OPS_LOKI_BASE_URL=https://loki.internal.example.com
+export OPS_LOKI_BEARER_TOKEN=...
+export OPS_LOKI_QUERY_TEMPLATE='{service="{service}"}'
+```
+
+#### Prometheus metrics
+
+```bash
+export OPS_PROMETHEUS_BASE_URL=https://prometheus.internal.example.com
+export OPS_PROMETHEUS_BEARER_TOKEN=...
+export OPS_PROMETHEUS_QUERY_TEMPLATE='up{job="{service}"}'
+```
+
+#### ArgoCD deploy history
+
+```bash
+export OPS_ARGOCD_BASE_URL=https://argocd.internal.example.com
+export OPS_ARGOCD_BEARER_TOKEN=...
+```
+
+#### Topology
+
+Use either a static file:
+
+```bash
+export OPS_TOPOLOGY_FILE=/etc/sre/topology.json
+```
+
+or a generic HTTP endpoint:
+
+```bash
+export OPS_TOPOLOGY_URL=https://service-catalog.internal.example.com/topology
+export OPS_TOPOLOGY_BEARER_TOKEN=...
+```
+
+### 3. Keep The System In Advisory Mode First
+
+Default mode:
+
+```bash
+export OPS_EXECUTION_MODE=advisory_only
+```
+
+In this mode:
+
+- the agent can read telemetry
+- the agent can preview a mutating action
+- the agent can request approval
+- the system will refuse actual execution
+
+### 4. Preview A Mutating Action
+
+```bash
+curl -X POST http://127.0.0.1:8000/ops/v1/advisories/preview \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer operator-token' \
+  -d '{
+    "incident_id": "inc-2026-0042",
+    "action": {
+      "action_type": "rollback_service",
+      "service": "invoice-consumer",
+      "target_version": "2026.03.7"
+    },
+    "justification": "Recent deploy correlates with DB connection leak",
+    "evidence": [
+      "orders-postgres connection slots exhausted",
+      "invoice-consumer deployed 12 minutes ago"
+    ]
+  }'
+```
+
+The response tells you:
+
+- whether the action is allowlisted
+- whether it violates scale or rate-limit guardrails
+- whether approval is required
+- what execution mode the system is currently in
+
+### 5. Request Approval
+
+```bash
+curl -X POST http://127.0.0.1:8000/ops/v1/approvals \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer operator-token' \
+  -d '{
+    "incident_id": "inc-2026-0042",
+    "action": {
+      "action_type": "rollback_service",
+      "service": "invoice-consumer",
+      "target_version": "2026.03.7"
+    },
+    "justification": "Evidence points to recent deploy causing pool exhaustion",
+    "evidence": [
+      "postgres log shows application_name=invoice-consumer",
+      "consumer metrics diverged after deploy"
+    ]
+  }'
+```
+
+### 6. Approve Or Reject
+
+Approve:
+
+```bash
+curl -X POST http://127.0.0.1:8000/ops/v1/approvals/<approval-id>/approve \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer approver-token' \
+  -d '{"note":"Approved by incident commander"}'
+```
+
+Reject:
+
+```bash
+curl -X POST http://127.0.0.1:8000/ops/v1/approvals/<approval-id>/reject \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer approver-token' \
+  -d '{"note":"Need stronger evidence before mutating prod"}'
+```
+
+### 7. Run Internal Drills Before Enabling Automation
+
+The control plane enforces a passing drill before mode changes when `OPS_DRILL_GATE_ENABLED=true`.
+
+Run a drill:
+
+```bash
+curl -X POST http://127.0.0.1:8000/ops/v1/drills/run \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer admin-token' \
+  -d '{
+    "strategy": "safe_fallback",
+    "minimum_average_score": 0.70,
+    "minimum_scenario_score": 0.60
+  }'
+```
+
+This uses the benchmark scenarios as internal readiness drills and records:
+
+- per-scenario score
+- recovery score
+- decision score
+- whether the drill run passed
+
+### 8. Move To Approval-Required Mode
+
+After a passing drill:
+
+```bash
+curl -X POST http://127.0.0.1:8000/ops/v1/mode \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer admin-token' \
+  -d '{"execution_mode":"approval_required"}'
+```
+
+Without a recent passing drill, the server will refuse this transition.
+
+### 9. Execute An Approved Action
+
+The remediation path is intentionally adapter-based.
+
+This implementation ships with a stronger generic webhook executor:
+
+```bash
+export OPS_REMEDIATION_WEBHOOK_URL=https://automation-gateway.internal.example.com/remediate
+export OPS_REMEDIATION_BEARER_TOKEN=...
+export OPS_REMEDIATION_STATUS_URL_TEMPLATE=https://automation-gateway.internal.example.com/operations/{operation_id}
+export OPS_REMEDIATION_VERIFY_ATTEMPTS=5
+export OPS_REMEDIATION_VERIFY_DELAY_SECONDS=1
+```
+
+Execution behavior:
+
+- an idempotency key is attached to the remediation request
+- the adapter expects an `operation_id`
+- if a status URL template is configured, the service polls for terminal status
+- execution records are stored and can be read later
+
+Execute:
+
+```bash
+curl -X POST http://127.0.0.1:8000/ops/v1/actions/execute \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer operator-token' \
+  -d '{
+    "incident_id": "inc-2026-0042",
+    "approval_id": "<approval-id>",
+    "action": {
+      "action_type": "rollback_service",
+      "service": "invoice-consumer",
+      "target_version": "2026.03.7"
+    },
+    "dry_run": false
+  }'
+```
+
+If the system is still in `advisory_only`, this request is rejected even with a valid approval.
+
+### 10. Review Audit Logs
+
+```bash
+curl http://127.0.0.1:8000/ops/v1/audit \
+  -H 'Authorization: Bearer approver-token'
+```
+
+Audit events are persisted in:
+
+- sqlite at `OPS_DATABASE_PATH`
+- or Postgres at `OPS_DATABASE_URL`
+- newline-delimited JSON at `OPS_AUDIT_JSONL_PATH` when configured
+
+### 11. Export A Tenant Backup Bundle
+
+```bash
+curl http://127.0.0.1:8000/ops/v1/admin/backup \
+  -H 'Authorization: Bearer admin-token' \
+  -H 'X-Tenant-Id: default'
+```
+
+The backup bundle contains:
+
+- approvals
+- audit events
+- drill results
+- execution records
+- current execution mode
+
 ## How To Use It With The Python Client
 
 The OpenEnv client wrapper lives in [sre_incident_env/client.py](/Volumes/macSSD/git/meta-hackathon-sst/sre_incident_env/client.py).
@@ -708,6 +1036,14 @@ Before any real rollback or scale change:
 - show the exact action payload
 - log approval and requester identity
 
+This repository now enforces that pattern structurally through:
+
+- approval records
+- approval status transitions
+- audit events
+- execution-mode checks
+- drill-gated mode changes
+
 ### Keep Actions Typed
 
 Do not let the model improvise raw operational commands in early production systems.
@@ -729,6 +1065,64 @@ Persist:
 - reward or production outcome
 - final root-cause declaration
 - operator approval
+
+This repository now also persists:
+
+- tenant-scoped execution records
+- execution backend and operation ids
+- drill history for automation gating
+
+### Add Policy Rules, Not Just Static Allowlists
+
+The control plane now supports policy rules through `OPS_POLICY_RULES_JSON`.
+
+Supported rule dimensions:
+
+- `action_types`
+- `services`
+- `tenants`
+- `roles`
+- UTC active time windows
+- `deny`
+- `require_approval`
+- `max_replicas`
+- `max_rps`
+
+Example:
+
+```bash
+export OPS_POLICY_RULES_JSON='[
+  {
+    "rule_id": "restrict-prod-scale",
+    "services": ["payments-api"],
+    "action_types": ["scale_service"],
+    "max_replicas": 4
+  },
+  {
+    "rule_id": "deny-midnight-rollbacks",
+    "action_types": ["rollback_service"],
+    "active_from_hour_utc": 0,
+    "active_to_hour_utc": 5,
+    "deny": true
+  }
+]'
+```
+
+### Rate-Limit Privileged APIs
+
+Approver and admin paths are now rate-limited in-process.
+
+Relevant knobs:
+
+- `OPS_ADMIN_RATE_LIMIT_COUNT`
+- `OPS_ADMIN_RATE_LIMIT_WINDOW_SECONDS`
+
+For a more complete deployment, place the service behind:
+
+- an API gateway
+- mTLS or service mesh policy
+- global distributed rate limiting
+- centralized auth
 
 This is essential for evaluation, postmortems, and model iteration.
 
@@ -780,6 +1174,8 @@ Deployed endpoints:
 - `/step`
 - `/state`
 - `/mcp`
+- `/ops/v1/status`
+- `/ops/v1/*`
 
 The Space page is for discoverability and documentation. The `hf.space` domain is what evaluators and automated tooling hit.
 
@@ -799,6 +1195,52 @@ Defaults are intentionally set only for:
 `HF_TOKEN` has no default and must be provided at runtime.
 
 All LLM calls use the OpenAI client configured from those variables.
+
+## Control-Plane Environment Variables
+
+Core control-plane flags:
+
+- `OPS_REQUIRE_AUTH`
+- `OPS_DISABLE_AUTH_FOR_LOCAL_DEV`
+- `OPS_EXECUTION_MODE`
+- `OPS_APPROVAL_REQUIRED_FOR_MUTATIONS`
+- `OPS_DRILL_GATE_ENABLED`
+- `OPS_DRILL_VALIDITY_HOURS`
+- `OPS_ALLOWED_SERVICES`
+- `OPS_ALLOWED_MUTATING_ACTIONS`
+- `OPS_MAX_SCALE_REPLICAS`
+- `OPS_MAX_RATE_LIMIT_RPS`
+- `OPS_ADMIN_RATE_LIMIT_COUNT`
+- `OPS_ADMIN_RATE_LIMIT_WINDOW_SECONDS`
+- `OPS_DATABASE_PATH`
+- `OPS_DATABASE_URL`
+- `OPS_AUDIT_JSONL_PATH`
+- `OPS_POLICY_RULES_JSON`
+
+Adapter variables:
+
+- `OPS_LOKI_BASE_URL`
+- `OPS_LOKI_BEARER_TOKEN`
+- `OPS_LOKI_QUERY_TEMPLATE`
+- `OPS_PROMETHEUS_BASE_URL`
+- `OPS_PROMETHEUS_BEARER_TOKEN`
+- `OPS_PROMETHEUS_QUERY_TEMPLATE`
+- `OPS_ARGOCD_BASE_URL`
+- `OPS_ARGOCD_BEARER_TOKEN`
+- `OPS_TOPOLOGY_FILE`
+- `OPS_TOPOLOGY_URL`
+- `OPS_TOPOLOGY_BEARER_TOKEN`
+- `OPS_REMEDIATION_WEBHOOK_URL`
+- `OPS_REMEDIATION_BEARER_TOKEN`
+- `OPS_REMEDIATION_STATUS_URL_TEMPLATE`
+- `OPS_REMEDIATION_VERIFY_ATTEMPTS`
+- `OPS_REMEDIATION_VERIFY_DELAY_SECONDS`
+
+Secret resolution supports:
+
+- plain values
+- `file:///path/to/secret`
+- `env://ENV_VAR_NAME`
 
 ## Common Mistakes
 

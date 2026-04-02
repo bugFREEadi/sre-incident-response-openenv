@@ -10,8 +10,10 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi",
+    "httpx",
     "openai",
     "openenv-core[core]",
+    "psycopg[binary]",
     "uvicorn",
 ]
 
