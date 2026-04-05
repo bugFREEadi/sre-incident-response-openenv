@@ -1,6 +1,6 @@
 # API Reference
 
-This document summarizes the public HTTP surface exposed by [server/app.py](/Volumes/macSSD/git/meta-hackathon-sst/server/app.py).
+This document summarizes the public HTTP surface exposed by [server/app.py](server/app.py).
 
 ## Base Endpoints
 

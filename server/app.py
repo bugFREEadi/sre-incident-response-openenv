@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import Depends, Query
-from openenv.core.env_server.http_server import create_app
+from openenv_core.env_server.http_server import create_app
 from starlette.responses import HTMLResponse
 
 from server.ops_auth import make_auth_dependency

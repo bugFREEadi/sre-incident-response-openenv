@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from openenv.core import EnvClient
-from openenv.core.client_types import StepResult
+from openenv_core.http_env_client import HTTPEnvClient as EnvClient
+from openenv_core.client_types import StepResult
 
 from .models import SREIncidentAction, SREIncidentObservation, SREIncidentState
 

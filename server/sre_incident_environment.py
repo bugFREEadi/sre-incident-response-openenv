@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from openenv.core.env_server.interfaces import Environment
-from openenv.core.env_server.types import EnvironmentMetadata
+from openenv_core.env_server.interfaces import Environment
+from openenv_core.env_server.types import EnvironmentMetadata
 
 from sre_incident_env.models import (
     SREIncidentAction,

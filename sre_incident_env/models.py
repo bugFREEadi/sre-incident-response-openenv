@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from openenv.core.env_server.types import Action, Observation, State
+from openenv_core.env_server.types import Action, Observation, State
 from pydantic import BaseModel, Field
 
 ServiceStatus = Literal["healthy", "degraded", "down"]

@@ -1,6 +1,58 @@
 spec_version: 1
 name: sre_incident_response
+description: >
+  Causal SRE incident diagnosis and staged remediation benchmark for training
+  and evaluating AI agents on real microservice failure modes. Agents must
+  investigate before acting—brute-force restarts are penalised even when
+  services temporarily recover—because the grader separately scores recovery
+  quality and decision quality. Five production-style incident scenarios, each
+  with a tempting wrong move and deterministic clues in logs, metrics,
+  dependencies, and deploy history.
 type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
+tags:
+  - sre
+  - incident-response
+  - observability
+  - microservices
+  - benchmark
+  - causal-reasoning
+tasks:
+  - id: s01_restart_cascade
+    description: >
+      A connection leak in invoice-consumer exhausts orders-postgres, but the
+      symptom appears as front-door latency on payments-api. The tempting wrong
+      move is to restart payments-api, which makes things worse. The correct fix
+      is to declare invoice-consumer as root cause (reason: connection_leak) and
+      roll back to the previous version.
+    difficulty: hard
+  - id: s02_corrupt_scaleup
+    description: >
+      A feature-flag corruption in checkout-api causes pricing errors. The
+      obvious move is to scale up checkout-api, which only spreads the
+      corruption. The correct fix is to declare the root cause
+      (reason: feature_flag_corruption) and set rate limit to 0 to drain traffic.
+    difficulty: medium
+  - id: s03_wrong_rollback
+    description: >
+      A bad deploy of identity-service causes auth failures that surface in
+      accounts-api metrics. The temptation is to roll back accounts-api, but the
+      evidence points to identity-service. Correct fix: declare identity-service
+      (reason: bad_deploy) and roll back to the previous stable version.
+    difficulty: easy
+  - id: s04_cache_stampede
+    description: >
+      A cache-key regression in catalog-api causes stampede against redis-catalog.
+      Scaling catalog-api or restarting redis-catalog only worsens load. The
+      correct fix is to declare catalog-api (reason: cache_key_regression) and
+      roll back to the last stable version.
+    difficulty: medium
+  - id: s05_webhook_retry_storm
+    description: >
+      A duplicate-send flag shipped in notification-dispatcher triggers a
+      webhook retry storm. Scaling adds more duplicated traffic. The correct fix
+      is to declare the root cause (reason: duplicate_dispatch) and set rate
+      limit to 0 to stop the storm.
+    difficulty: medium

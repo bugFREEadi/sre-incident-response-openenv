@@ -61,8 +61,8 @@ This repo is already packaged as a Docker Space.
 
 Important files:
 
-- [Dockerfile](/Volumes/macSSD/git/meta-hackathon-sst/Dockerfile)
-- [openenv.yaml](/Volumes/macSSD/git/meta-hackathon-sst/openenv.yaml)
+- [Dockerfile](Dockerfile)
+- [openenv.yaml](openenv.yaml)
 
 Typical deployment flow:
 

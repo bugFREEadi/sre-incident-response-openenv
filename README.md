@@ -27,17 +27,17 @@ The killer case is Scenario 1: `payments-api` looks sick, but restarting it make
 
 ## Production Guide
 
-For the full documentation set, start at [docs/README.md](/Volumes/macSSD/git/meta-hackathon-sst/docs/README.md).
+For the full documentation set, start at [docs/README.md](docs/README.md).
 
 Primary docs:
 
-- [docs/production_guide.md](/Volumes/macSSD/git/meta-hackathon-sst/docs/production_guide.md)
-- [docs/api_reference.md](/Volumes/macSSD/git/meta-hackathon-sst/docs/api_reference.md)
-- [docs/deployment_guide.md](/Volumes/macSSD/git/meta-hackathon-sst/docs/deployment_guide.md)
+- [docs/production_guide.md](docs/production_guide.md)
+- [docs/api_reference.md](docs/api_reference.md)
+- [docs/deployment_guide.md](docs/deployment_guide.md)
 
 Environment templates:
 
-- [.env.example](/Volumes/macSSD/git/meta-hackathon-sst/.env.example) for a detailed starter configuration
+- [.env.example](.env.example) for a detailed starter configuration
 
 That guide covers:
 
@@ -164,12 +164,12 @@ The clues are also written in production-style telemetry:
 
 The repo now includes the required OpenEnv packaging pieces:
 
-- [openenv.yaml](/Volumes/macSSD/git/meta-hackathon-sst/openenv.yaml)
-- [pyproject.toml](/Volumes/macSSD/git/meta-hackathon-sst/pyproject.toml)
-- [server/app.py](/Volumes/macSSD/git/meta-hackathon-sst/server/app.py)
-- [sre_incident_env/models.py](/Volumes/macSSD/git/meta-hackathon-sst/sre_incident_env/models.py)
-- [sre_incident_env/client.py](/Volumes/macSSD/git/meta-hackathon-sst/sre_incident_env/client.py)
-- [inference.py](/Volumes/macSSD/git/meta-hackathon-sst/inference.py)
+- [openenv.yaml](openenv.yaml)
+- [pyproject.toml](pyproject.toml)
+- [server/app.py](server/app.py)
+- [sre_incident_env/models.py](sre_incident_env/models.py)
+- [sre_incident_env/client.py](sre_incident_env/client.py)
+- [inference.py](inference.py)
 
 Validation commands:
 
@@ -202,7 +202,7 @@ OpenEnv validation status:
 
 ## Baseline Inference
 
-The required root-level [inference.py](/Volumes/macSSD/git/meta-hackathon-sst/inference.py) uses the OpenAI client, reads `API_BASE_URL`, `MODEL_NAME`, `OPENAI_API_KEY` and `HF_TOKEN`, emits `[START]`, `[STEP]`, and `[END]` logs, and falls back to deterministic safe policies if model output is malformed.
+The required root-level [inference.py](inference.py) uses the OpenAI chat completions client, reads `API_BASE_URL`, `MODEL_NAME`, and `HF_TOKEN` (with fallback to `OPENAI_API_KEY` and `API_KEY`), emits `[START]`, `[STEP]`, and `[END]` logs in the mandatory format, and falls back to deterministic safe policies if model output is malformed.
 
 Dry-run baseline with fallback policies currently produces:
 
@@ -285,7 +285,7 @@ In practice that usually means:
 4. Start with advisory mode in production, where the agent proposes actions for human approval.
 5. Only allow constrained automation after the agent consistently performs well in this benchmark and in internal rehearsals.
 
-The detailed rollout pattern, API examples, and integration code live in [docs/production_guide.md](/Volumes/macSSD/git/meta-hackathon-sst/docs/production_guide.md).
+The detailed rollout pattern, API examples, and integration code live in [docs/production_guide.md](docs/production_guide.md).
 
 ## Ops Control Plane
 
@@ -416,7 +416,7 @@ export OPS_POLICY_RULES_JSON='[
 
 - The environment is deterministic at the simulation layer; observation sampling uses seeded noise from the episode id and tick.
 - The implementation intentionally stays small: 4 services per scenario, 5 incident families, 8 typed actions, and deterministic grading.
-- The benchmark now ships as a real OpenEnv package instead of only a custom FastAPI app.
+- The benchmark ships as a real OpenEnv package via `openenv-core`; it is not only a custom FastAPI app.
 - The ops control plane is intended as a safe adoption layer, not a license to grant broad production mutation rights immediately.
-- `openenv validate .` and `openenv validate --url ...` both pass locally.
-- `docker build .` could not be exercised in this session because the local Docker daemon socket was unavailable, even though the CLI itself is installed.
+- `openenv validate .` and `openenv validate --url ...` both pass.
+- `docker build .` and `docker run` produce a working server on port 8000.

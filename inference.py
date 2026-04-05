@@ -24,31 +24,45 @@ TASKS = [
 ]
 MAX_STEPS = 8
 SUCCESS_SCORE_THRESHOLD = 0.65
-API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
-HF_TOKEN = os.getenv("HF_TOKEN")
 
+# Credential resolution: prefer HF_TOKEN (required by spec), fall back to
+# OPENAI_API_KEY and the generic API_KEY for evaluators using either convention.
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
+
+
+# ---------------------------------------------------------------------------
+# Mandatory structured logging — spec requires exactly this format, with no
+# deviations in field names, ordering, decimal precision, or bracket usage.
+# ---------------------------------------------------------------------------
 
 def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
 def log_step(step: int, action: str, reward: float, done: bool, error: str | None) -> None:
+    # Spec: reward=<0.00>, done=<true|false>, error=<msg|null> — single line, no newlines
     safe_action = action.replace("\n", " ")
-    safe_error = "" if error is None else error.replace("\n", " ")
+    error_val = "null" if error is None else error.replace("\n", " ")
     print(
-        f"[STEP] step={step} action={safe_action} reward={reward:.4f} done={str(done).lower()} error={safe_error}",
+        f"[STEP] step={step} action={safe_action} reward={reward:.2f} done={str(done).lower()} error={error_val}",
         flush=True,
     )
 
 
 def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
-    reward_blob = ",".join(f"{value:.4f}" for value in rewards)
+    # Spec: score=<0.00>, rewards=<r1,r2,...> — no square brackets
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.4f} rewards=[{reward_blob}]",
+        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
         flush=True,
     )
 
+
+# ---------------------------------------------------------------------------
+# Server helpers
+# ---------------------------------------------------------------------------
 
 def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -71,6 +85,10 @@ async def wait_for_server(base_url: str, timeout_s: float = 30.0) -> None:
     raise RuntimeError(f"Server did not become healthy at {base_url} within {timeout_s}s")
 
 
+# ---------------------------------------------------------------------------
+# LLM helpers
+# ---------------------------------------------------------------------------
+
 def extract_json(text: str) -> dict[str, Any] | None:
     start = text.find("{")
     end = text.rfind("}")
@@ -83,7 +101,8 @@ def extract_json(text: str) -> dict[str, Any] | None:
 
 
 def fallback_action(task_name: str, step: int) -> dict[str, Any]:
-    policies = {
+    """Deterministic safe-policy fallback used when the model call fails."""
+    policies: dict[str, list[dict[str, Any]]] = {
         "s01_restart_cascade": [
             {"action_type": "inspect_logs", "service": "orders-postgres", "tail_n": 20},
             {"action_type": "inspect_metrics", "service": "invoice-consumer", "window_ticks": 5},
@@ -172,13 +191,20 @@ def get_model_action(
     observation: dict[str, Any],
     history: list[str],
 ) -> dict[str, Any]:
+    """Call the LLM via chat.completions (OpenAI-compatible).
+
+    Falls back to the deterministic safe policy if the call fails or the
+    response cannot be parsed as JSON.  A [DEBUG] line is emitted so that
+    reviewers can distinguish model-driven steps from fallback steps without
+    breaking the mandatory [STEP] format.
+    """
     prompt = (
         "You are solving an SRE incident in a deterministic simulator.\n"
         "Choose exactly one next action as compact JSON only.\n"
         "Allowed action_type values: inspect_logs, inspect_metrics, inspect_dependencies, "
         "restart_service, rollback_service, scale_service, set_rate_limit, declare_root_cause, finish_incident.\n"
         "Prefer at least two inspection steps before remediation unless you already have enough evidence.\n"
-        "Output valid JSON with only relevant fields.\n\n"
+        "Output valid JSON with only relevant fields — no markdown, no explanation.\n\n"
         f"Task: {task_name}\n"
         f"Step: {step}\n"
         f"History: {history}\n"
@@ -186,20 +212,28 @@ def get_model_action(
     )
 
     try:
-        response = client.responses.create(
+        response = client.chat.completions.create(
             model=MODEL_NAME,
-            input=prompt,
+            messages=[{"role": "user", "content": prompt}],
             temperature=0,
+            max_tokens=256,
         )
-        text = getattr(response, "output_text", "") or ""
+        text = (response.choices[0].message.content or "").strip()
         parsed = extract_json(text)
         if parsed:
             return parsed
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[DEBUG] Model call failed ({exc}), using fallback for {task_name} step {step}", flush=True)
+        return fallback_action(task_name, step)
 
+    # Parsed nothing useful from the response
+    print(f"[DEBUG] Could not parse JSON from model output, using fallback for {task_name} step {step}", flush=True)
     return fallback_action(task_name, step)
 
+
+# ---------------------------------------------------------------------------
+# Episode runner
+# ---------------------------------------------------------------------------
 
 async def run_task(client: OpenAI, base_url: str, task_name: str) -> tuple[float, list[float]]:
     rewards: list[float] = []
@@ -221,11 +255,17 @@ async def run_task(client: OpenAI, base_url: str, task_name: str) -> tuple[float
             action = SREIncidentAction(**action_payload)
             result = await env.step(action)
 
+            # The environment returns the running grader score at each step;
+            # the final step's reward is the definitive episode score.
             reward = float(result.reward or 0.0)
             rewards.append(reward)
             steps_taken = step
             history.append(json.dumps(action_payload, separators=(",", ":")))
-            error = result.observation.metadata.get("error") if result.observation.metadata else None
+
+            error: str | None = None
+            if result.observation.metadata:
+                error = result.observation.metadata.get("error")
+
             log_step(
                 step=step,
                 action=json.dumps(action_payload, separators=(",", ":")),
@@ -233,19 +273,28 @@ async def run_task(client: OpenAI, base_url: str, task_name: str) -> tuple[float
                 done=result.done,
                 error=error,
             )
+
             if result.done:
                 break
 
-    score = rewards[-1] if rewards else 0.0
-    score = max(0.0, min(score, 1.0))
+    # The last reward IS the full grader score (final_score = 0.5*recovery + 0.5*decision).
+    # We clamp to [0, 1] as a safety measure.
+    score = max(0.0, min(rewards[-1] if rewards else 0.0, 1.0))
     success = score >= SUCCESS_SCORE_THRESHOLD
     log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
     return score, rewards
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 async def main() -> None:
     if not HF_TOKEN:
-        raise RuntimeError("HF_TOKEN must be set before running inference.py")
+        raise RuntimeError(
+            "A valid API key must be set. "
+            "Export HF_TOKEN, OPENAI_API_KEY, or API_KEY before running inference.py"
+        )
 
     port = free_port()
     base_url = f"http://127.0.0.1:{port}"
@@ -264,7 +313,7 @@ async def main() -> None:
             score, _ = await run_task(client, base_url, task_name)
             scores.append(score)
         overall = sum(scores) / len(scores)
-        print(f"Average score: {overall:.4f}", flush=True)
+        print(f"Average score: {overall:.2f}", flush=True)
     finally:
         server.terminate()
         try:

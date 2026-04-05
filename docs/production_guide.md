@@ -111,7 +111,7 @@ The goal is not to memorize a puzzle. The goal is to evaluate whether an agent b
 
 `reset()` starts a fresh episode for one scenario and returns the initial observation.
 
-Internally, this happens in [server/sre_incident_environment.py](/Volumes/macSSD/git/meta-hackathon-sst/server/sre_incident_environment.py) and [world.py](/Volumes/macSSD/git/meta-hackathon-sst/world.py):
+Internally, this happens in [server/sre_incident_environment.py](server/sre_incident_environment.py) and [world.py](world.py):
 
 - a scenario is selected
 - a hidden `WorldState` is created
@@ -176,11 +176,11 @@ Beyond the OpenEnv simulator routes, the server now exposes production control-p
 - `GET /ops/v1/drills/latest`
 - `POST /ops/v1/mode`
 
-These routes live in [server/app.py](/Volumes/macSSD/git/meta-hackathon-sst/server/app.py) and are backed by [server/ops_service.py](/Volumes/macSSD/git/meta-hackathon-sst/server/ops_service.py).
+These routes live in [server/app.py](server/app.py) and are backed by [server/ops_service.py](server/ops_service.py).
 
 ## Action Contract
 
-The typed action model lives in [sre_incident_env/models.py](/Volumes/macSSD/git/meta-hackathon-sst/sre_incident_env/models.py).
+The typed action model lives in [sre_incident_env/models.py](sre_incident_env/models.py).
 
 Allowed `action_type` values:
 
@@ -235,7 +235,7 @@ If `finish_incident()` is called before a root cause declaration, the environmen
 
 ## Observation Contract
 
-The typed observation model also lives in [sre_incident_env/models.py](/Volumes/macSSD/git/meta-hackathon-sst/sre_incident_env/models.py).
+The typed observation model also lives in [sre_incident_env/models.py](sre_incident_env/models.py).
 
 Each observation includes:
 
@@ -762,7 +762,7 @@ The backup bundle contains:
 
 ## How To Use It With The Python Client
 
-The OpenEnv client wrapper lives in [sre_incident_env/client.py](/Volumes/macSSD/git/meta-hackathon-sst/sre_incident_env/client.py).
+The OpenEnv client wrapper lives in [sre_incident_env/client.py](sre_incident_env/client.py).
 
 Minimal example:
 
@@ -828,7 +828,7 @@ Important agent design rules:
 - log every step and reward
 - preserve full observation history for debugging
 
-The baseline implementation for this loop is [inference.py](/Volumes/macSSD/git/meta-hackathon-sst/inference.py).
+The baseline implementation for this loop is [inference.py](inference.py).
 
 ## How To Use It In A Real App
 
@@ -971,7 +971,7 @@ This repository is intentionally small enough to customize.
 
 ### Update Service Graphs
 
-Edit the scenario modules under [scenarios/](/Volumes/macSSD/git/meta-hackathon-sst/scenarios) to reflect your own dependency graph.
+Edit the scenario modules under [scenarios/](scenarios) to reflect your own dependency graph.
 
 Good adaptations:
 
@@ -1163,7 +1163,7 @@ Recommended checks:
 
 ## Hugging Face Space Deployment
 
-This repo is packaged as a Docker Space with [openenv.yaml](/Volumes/macSSD/git/meta-hackathon-sst/openenv.yaml) and [Dockerfile](/Volumes/macSSD/git/meta-hackathon-sst/Dockerfile).
+This repo is packaged as a Docker Space with [openenv.yaml](openenv.yaml) and [Dockerfile](Dockerfile).
 
 Deployed endpoints:
 
@@ -1181,7 +1181,7 @@ The Space page is for discoverability and documentation. The `hf.space` domain i
 
 ## Environment Variables For Inference
 
-The root-level [inference.py](/Volumes/macSSD/git/meta-hackathon-sst/inference.py) expects:
+The root-level [inference.py](inference.py) expects:
 
 - `API_BASE_URL`
 - `MODEL_NAME`
