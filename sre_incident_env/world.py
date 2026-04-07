@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import asdict
 from uuid import uuid4
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from actions import ActionExecutor
 from models import Action, StepResult, WorldState
 from observation import ObservationBuilder

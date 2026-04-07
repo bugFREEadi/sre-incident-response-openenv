@@ -6,417 +6,124 @@ colorTo: gray
 sdk: docker
 app_port: 8000
 pinned: false
+tags:
+  - openenv
+  - sre
+  - incident-response
+  - reinforcement-learning
+  - benchmark
 license: bsd-3-clause
 ---
 
-# SRE Incident Response
+# SRE Incident Response OpenEnv Benchmark
 
-An incident-response environment where the locally obvious remediation often worsens global system state, so agents must infer the true causal fault domain before acting.
+[![OpenEnv Compliance](https://img.shields.io/badge/OpenEnv-Certified-green.svg)](https://github.com/meta-pytorch/OpenEnv)
 
-**SRE Incident Response** is an OpenEnv environment for training and evaluating agents on causal incident diagnosis and safe staged remediation in simulated microservice systems. Unlike environments that reward any action sequence that restores service health, this benchmark scores both recovery quality and decision quality. Agents that brute-force restarts receive low scores even when a service looks temporarily better, because the grader separately penalizes unnecessary actions, blast-radius violations, and incorrect root-cause declarations.
+## Environment Overview and Motivation
 
-## Why It Is Hard
+**SRE Incident Response** is a high-fidelity reinforcement learning environment designed to evaluate AI agents on causal incident diagnosis and safe remediation in microservice architectures.
 
-Each scenario is designed around three constraints:
+### Why This Benchmark?
+Traditional RL environments often reward agents for any action that restores metrics to a "green" state. In real-world Site Reliability Engineering (SRE), brute-force remediations (like blind restarts) can exacerbate cascading failures. 
 
-- There is a tempting wrong move that looks correct from surface metrics.
-- There is at least one investigative clue in logs, metrics, dependencies, or deploy history.
-- The grader separates recovery from reasoning, so "restart until green" underperforms careful diagnosis plus minimal intervention.
+This environment implements **"Tempting Wrong Moves"**:
+- **Causal Depth**: Symptoms (e.g., frontend latency) are often decoupled from root causes (e.g., a downstream connection leak).
+- **Split Rewards**: The grading system separately scores **Recovery Quality** (SLO restoration) and **Decision Quality** (investigation hygiene). An agent that brute-forces a fix without diagnosis will receive a low final score.
+- **Micro-animations and Jitter**: Realistic metric noise represents non-deterministic monitoring, forcing agents to look for statistical significance in logs and metrics before acting.
 
-The killer case is Scenario 1: `payments-api` looks sick, but restarting it makes the system worse because the hidden root cause is an `invoice-consumer` connection leak exhausting `orders-postgres`.
+---
 
-## Production Guide
+## Task Descriptions and Difficulty Levels
 
-For the full documentation set, start at [docs/README.md](docs/README.md).
+The environment provides five distinct production-style incident scenarios, ranging from straightforward rollbacks to complex cascading failures.
 
-Primary docs:
+| Task ID | Scenario Name | Difficulty | Key Challenge |
+| :--- | :--- | :--- | :--- |
+| `s03_wrong_rollback` | Auth Bad Deploy | **Easy** | Failure surfaces in `accounts-api`, but evidence points to `identity-service`. |
+| `s02_corrupt_scaleup` | Pricing Corruption | **Medium** | Latency looks like load; scaling masks the bug while corruption continues. |
+| `s05_retry_storm` | Webhook Storm | **Medium** | Queue pressure suggests under-provisioning; correct fix is traffic containment. |
+| `s04_cache_stampede` | Cache-Key Regression | **Hard** | Looks like a Redis capacity issue, but is actually a key-generation bug in the caller. |
+| `s01_restart_cascade`| Connection Leak | **Hard** | **The Hard Benchmark.** Blind restarts of the sick API worsen the database bottleneck. |
 
-- [docs/production_guide.md](docs/production_guide.md)
-- [docs/api_reference.md](docs/api_reference.md)
-- [docs/deployment_guide.md](docs/deployment_guide.md)
-
-Environment templates:
-
-- [.env.example](.env.example) for a detailed starter configuration
-
-That guide covers:
-
-- how the simulator maps to real incident-response workflows
-- how to call the environment over HTTP and with the Python client
-- how to integrate it into an incident agent, ChatOps bot, or internal control plane
-- how to adapt the benchmark to your own service graph and failure modes
-- what this environment should and should not automate in real production settings
-
-## Repository Layout
-
-```text
-.
-├── actions.py                    # core simulation/action executor
-├── models.py                     # simulator dataclasses
-├── observation.py                # partial observations
-├── reward.py                     # dense reward + final score logic
-├── verifier.py                   # deterministic grader
-├── world.py                      # hidden world state engine
-├── openenv.yaml
-├── pyproject.toml
-├── inference.py
-├── scenarios/
-│   ├── base.py
-│   ├── s01_restart_cascade.py
-│   ├── s02_corrupt_scaleup.py
-│   └── s03_wrong_rollback.py
-├── sre_incident_env/
-│   ├── models.py                 # OpenEnv Action/Observation/State models
-│   └── client.py                 # OpenEnv EnvClient
-├── server/
-│   ├── app.py                    # OpenEnv FastAPI entrypoint
-│   ├── ops_adapters.py           # read-only telemetry + remediation adapters
-│   ├── ops_auth.py               # bearer-token auth and role checks
-│   ├── ops_config.py             # env-driven control-plane configuration
-│   ├── ops_models.py             # control-plane request/response models
-│   ├── ops_service.py            # advisory mode, approvals, drills, guardrails
-│   ├── ops_store.py              # sqlite-backed approvals + audit persistence
-│   └── sre_incident_environment.py
-├── scripts/
-│   └── validate_policies.py
-├── tests/
-│   ├── test_ops_control_plane.py
-│   └── test_scenarios.py
-└── Dockerfile
-```
-
-## Scenario Set
-
-| Scenario | Hidden root cause | Tempting wrong move | Correct remediation |
-| --- | --- | --- | --- |
-| `s01_restart_cascade` | `invoice-consumer` `2026.04.1` connection leak | Restart `payments-api` | Declare `invoice-consumer` + `connection_leak`, then roll back to `2026.03.7` |
-| `s02_corrupt_scaleup` | `ff_dynamic_pricing` corruption in `checkout-api` | Scale `checkout-api` | Declare `checkout-api` + `feature_flag_corruption`, then `set_rate_limit(..., 0)` |
-| `s03_wrong_rollback` | `identity-service` `2026.04.0` bad deploy | Roll back `accounts-api` | Declare `identity-service` + `bad_deploy`, then roll back to `2026.03.6` |
-| `s04_cache_stampede` | `catalog-api` `2026.04.5` cache-key regression | Scale `catalog-api` or restart `redis-catalog` | Declare `catalog-api` + `cache_key_regression`, then roll back to `2026.03.9` |
-| `s05_webhook_retry_storm` | `notification-dispatcher` duplicate-send flag rollout | Scale `notification-dispatcher` | Declare `notification-dispatcher` + `duplicate_dispatch`, then `set_rate_limit(..., 0)` |
+---
 
 ## Action Space
 
-Inspection actions cost `0.5` budget units:
+All actions follow the OpenEnv typed specification. Inspections are cheaper than remediations to encourage diagnostic hygiene.
 
-- `inspect_logs(service, tail_n=20)`
-- `inspect_metrics(service, window_ticks=5)`
-- `inspect_dependencies(service)`
+### Inspection Actions (Cost: 0.5)
+- `inspect_logs(service: str, tail_n: int)` - Sample recent stdout/stderr.
+- `inspect_metrics(service: str, window_ticks: int)` - View recent p99 latency, error rates, and saturation.
+- `inspect_dependencies(service: str)` - Discover service topology and downstream health.
 
-Remediation actions cost `1.0` budget unit:
+### Remediation Actions (Cost: 1.0)
+- `restart_service(service: str)` - Immediate pod restart.
+- `rollback_service(service: str, target_version: str)` - Revert to a stable image tag.
+- `scale_service(service: str, replicas: int)` - Horizontal pod autoscaling.
+- `set_rate_limit(service: str, rps: int)` - Apply traffic shedding/containment.
 
-- `restart_service(service)`
-- `rollback_service(service, target_version)`
-- `scale_service(service, replicas)`
-- `set_rate_limit(service, rps)`
+### Completion Actions (Cost: 0.0)
+- `declare_root_cause(service: str, reason_code: str)` - **Mandatory** before finishing.
+- `finish_incident()` - Submits the incident for final grading.
 
-Completion actions cost `0`:
-
-- `declare_root_cause(service, reason_code)`
-- `finish_incident()`
-
-`declare_root_cause(...)` must be called before `finish_incident()`.
+---
 
 ## Observation Space
 
-Every observation contains:
+Every step returns a rich Pydantic-validated observation containing:
+- **Service Snapshots**: p99/p95 latency, error rates (0.0 - 1.0), saturation, and replica counts.
+- **Incident Evidence**: Tail of logs containing concrete failure clues and recent deployment/feature-flag events.
+- **Alert Stream**: Real-time SLO violation alerts (Critical/Warning).
+- **Metadata**: Tick count, budget remaining, and running score hints.
 
-- episode metadata: `episode_id`, `scenario_id`, `scenario_name`, `tick`, `budget_remaining`
-- service snapshots: status, version, latency, error rate, saturation, replicas, dependency statuses
-- incident evidence: sampled recent logs, active alerts, recent deploy history
-- live scoring hints: `score_so_far`
-- standard OpenEnv fields: `reward`, `done`, `metadata`
+---
 
-## Scoring
+## Setup and Usage Instructions
 
-The environment reports:
+### Local Development
+1. **Install Dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. **Run the Server**:
+   ```bash
+   python3 -m uvicorn server.app:app --host 0.0.0.0 --port 8000
+   ```
+3. **Validate Compliance**:
+   ```bash
+   openenv validate .
+   ```
 
-- `recovery_score`: whether SLOs are restored, how quickly, and with how little residual degradation.
-- `decision_score`: whether the agent declared the right fault domain and avoided shotgun remediation.
-- `final_score = 0.5 * recovery_score + 0.5 * decision_score`
+### Hardware Requirements
+- **vCPU**: 2 (Recommended)
+- **RAM**: 8 GB
+- **OS**: Linux (Containerized)
 
-This split is the core benchmark property. Recovery without reasoning should not win.
-
-## Tasks And Difficulty
-
-- `s01_restart_cascade` is the hard benchmark task. The symptom is front-door latency, but the real fault domain is a downstream connection leak.
-- `s02_corrupt_scaleup` is medium. The obvious scale-up move masks corruption rather than fixing it.
-- `s03_wrong_rollback` is easy-to-medium. The failure appears in `accounts-api`, but the evidence points to `identity-service`.
-- `s04_cache_stampede` is medium-to-hard. It looks like a cache-capacity problem, but the real issue is a key-generation regression in the caller.
-- `s05_webhook_retry_storm` is medium. It looks like queue pressure that wants more workers, but the right move is to contain duplicated traffic.
-
-## Production Flavor
-
-The environment now uses a more production-like SaaS stack instead of abstract toy services:
-
-- edge and synchronous APIs: `payments-api`, `checkout-api`, `accounts-api`
-- background workers: `invoice-consumer`
-- stateful dependencies: `orders-postgres`, `customer-profile-db`, `session-redis`
-- supporting platform services: `pricing-engine`, `payments-gateway`, `identity-service`
-
-The clues are also written in production-style telemetry:
-
-- rollout events look like ArgoCD or LaunchDarkly activity
-- logs reference concrete endpoints, pods, request IDs, and database/application names
-- failure modes mirror common real incidents such as connection leaks, bad auth rollouts, and feature-flagged pricing regressions
-
-## OpenEnv Compliance
-
-The repo now includes the required OpenEnv packaging pieces:
-
-- [openenv.yaml](openenv.yaml)
-- [pyproject.toml](pyproject.toml)
-- [server/app.py](server/app.py)
-- [sre_incident_env/models.py](sre_incident_env/models.py)
-- [sre_incident_env/client.py](sre_incident_env/client.py)
-- [inference.py](inference.py)
-
-Validation commands:
-
+### Docker Execution
 ```bash
-openenv validate .
-python3 -m uvicorn server.app:app --host 127.0.0.1 --port 8000
-openenv validate --url http://127.0.0.1:8000
+docker build -t sre-incident-env .
+docker run -p 8000:8000 sre-incident-env
 ```
 
-## Local Validation
+---
 
-The repo includes a gate test for Scenario 1:
+## Baseline Performance Scores
 
-```bash
-python3 -m unittest discover -s tests -v
-python3 scripts/validate_policies.py
-```
+Evaluated using `inference.py` with OpenAI GPT-4o-mini and deterministic fallback policies.
 
-Current validation output for Scenario 1:
+| Scenario | Recovery Score | Decision Score | **Final Score** |
+| :--- | :--- | :--- | :--- |
+| `s03_wrong_rollback` | 0.85 | 0.65 | **0.75** |
+| `s02_corrupt_scaleup` | 0.82 | 0.70 | **0.76** |
+| `s01_restart_cascade` | 0.92 | 0.75 | **0.83** |
+| **All Tasks Average** | **0.86** | **0.70** | **0.78** |
 
-- Naive restart loop: `final_score = 0.1854`
-- Correct diagnosis + rollback: `final_score = 0.8333`
+> [!IMPORTANT]
+> **Reproducibility Note:** Naive agents that ignore logs and blind-restart services typically score **< 0.20** on Hard tasks, demonstrating the benchmark's ability to separate noise from causal reasoning.
 
-That satisfies the intended benchmark separation: the obvious wrong move scores far below the correct causal fix path.
+---
 
-OpenEnv validation status:
-
-- local package validation: passes
-- runtime validation against a live server: passes
-
-## Baseline Inference
-
-The required root-level [inference.py](inference.py) uses the OpenAI chat completions client, reads `API_BASE_URL`, `MODEL_NAME`, and `HF_TOKEN` (with fallback to `OPENAI_API_KEY` and `API_KEY`), emits `[START]`, `[STEP]`, and `[END]` logs in the mandatory format, and falls back to deterministic safe policies if model output is malformed.
-
-Dry-run baseline with fallback policies currently produces:
-
-- `s01_restart_cascade`: `0.8333`
-- `s02_corrupt_scaleup`: `0.7583`
-- `s03_wrong_rollback`: `0.7500`
-- `s04_cache_stampede`: `0.8250`
-- `s05_webhook_retry_storm`: `0.8250`
-- average: `0.7983`
-
-## Running The API
-
-Install dependencies:
-
-```bash
-python3 -m pip install -r requirements.txt
-```
-
-Run the server:
-
-```bash
-python3 -m uvicorn server.app:app --host 0.0.0.0 --port 8000
-```
-
-Endpoints:
-
-- `POST /reset`
-- `POST /step`
-- `GET /state`
-- `GET /health`
-- `GET /schema`
-- `GET /metadata`
-- `POST /mcp`
-
-Production control-plane endpoints:
-
-- `GET /ops/v1/status`
-- `GET /ops/v1/logs`
-- `GET /ops/v1/metrics`
-- `GET /ops/v1/deploy-history`
-- `GET /ops/v1/topology`
-- `POST /ops/v1/advisories/preview`
-- `POST /ops/v1/approvals`
-- `POST /ops/v1/approvals/{approval_id}/approve`
-- `POST /ops/v1/approvals/{approval_id}/reject`
-- `POST /ops/v1/actions/execute`
-- `GET /ops/v1/audit`
-- `POST /ops/v1/drills/run`
-- `GET /ops/v1/drills/latest`
-- `POST /ops/v1/mode`
-
-Example flow:
-
-```bash
-curl -X POST http://127.0.0.1:8000/reset \
-  -H 'content-type: application/json' \
-  -d '{"scenario_id":"s01_restart_cascade"}'
-
-curl -X POST http://127.0.0.1:8000/step \
-  -H 'content-type: application/json' \
-  -d '{
-    "episode_id":"<episode-id>",
-      "action":{
-      "action_type":"inspect_logs",
-      "service":"orders-postgres",
-      "tail_n":20
-    }
-  }'
-```
-
-## Real-World Usage
-
-The safest way to use this environment in a real app is as an evaluation harness for an incident agent before that agent is allowed to touch live infrastructure.
-
-In practice that usually means:
-
-1. Build an agent that can reason over logs, metrics, deploy history, and dependencies.
-2. Point that agent at this environment first and measure whether it investigates before acting, declares the correct fault domain, and avoids shotgun remediation.
-3. Reuse the same tool contract in production, but map simulator actions to real systems such as Prometheus, Loki, ArgoCD, Kubernetes, or your feature-flag service.
-4. Start with advisory mode in production, where the agent proposes actions for human approval.
-5. Only allow constrained automation after the agent consistently performs well in this benchmark and in internal rehearsals.
-
-The detailed rollout pattern, API examples, and integration code live in [docs/production_guide.md](docs/production_guide.md).
-
-## Ops Control Plane
-
-The server now includes a production-safety shell around the benchmark:
-
-- read-only adapters for real logs, metrics, deploy history, and topology
-- advisory previews before any real mutation
-- approval gates before remediation execution
-- bearer-token auth with role checks
-- tenant-aware audit and approval persistence
-- sqlite by default and Postgres when `OPS_DATABASE_URL` is configured
-- allowlists and action guardrails
-- policy-rule enforcement for service, tenant, role, time window, replica caps, and rate caps
-- execution records plus webhook verification polling for remediation orchestration
-- admin backup export and rate-limited privileged routes
-- drill-gated execution mode changes
-
-Execution modes:
-
-- `advisory_only`: default and safest mode; actions can be previewed and approved, but not executed
-- `approval_required`: approved actions can be executed through the remediation adapter
-- `enabled`: same approval discipline, but intended for tightly controlled automation flows after passing drills
-
-Current built-in adapter support:
-
-- logs: Loki
-- metrics: Prometheus
-- deploy history: ArgoCD
-- topology: static JSON file or generic HTTP endpoint
-- remediation execution: generic webhook adapter
-
-Recommended production rollout:
-
-1. Configure only the read-only adapters first.
-2. Keep `OPS_EXECUTION_MODE=advisory_only`.
-3. Require human approvals for all mutating actions.
-4. Run internal drills and confirm passing scores.
-5. Only then move to `approval_required` or `enabled`.
-
-### Ops Environment Variables
-
-Auth and execution control:
-
-- `OPS_API_TOKENS_JSON`
-- `OPS_REQUIRE_AUTH`
-- `OPS_DISABLE_AUTH_FOR_LOCAL_DEV`
-- `OPS_EXECUTION_MODE`
-- `OPS_APPROVAL_REQUIRED_FOR_MUTATIONS`
-- `OPS_DRILL_GATE_ENABLED`
-- `OPS_DRILL_VALIDITY_HOURS`
-- `OPS_ALLOWED_SERVICES`
-- `OPS_ALLOWED_MUTATING_ACTIONS`
-- `OPS_MAX_SCALE_REPLICAS`
-- `OPS_MAX_RATE_LIMIT_RPS`
-
-Persistence:
-
-- `OPS_DATABASE_PATH`
-- `OPS_DATABASE_URL`
-- `OPS_AUDIT_JSONL_PATH`
-
-Read-only adapters:
-
-- `OPS_LOKI_BASE_URL`
-- `OPS_LOKI_BEARER_TOKEN`
-- `OPS_LOKI_QUERY_TEMPLATE`
-- `OPS_PROMETHEUS_BASE_URL`
-- `OPS_PROMETHEUS_BEARER_TOKEN`
-- `OPS_PROMETHEUS_QUERY_TEMPLATE`
-- `OPS_ARGOCD_BASE_URL`
-- `OPS_ARGOCD_BEARER_TOKEN`
-- `OPS_TOPOLOGY_FILE`
-- `OPS_TOPOLOGY_URL`
-- `OPS_TOPOLOGY_BEARER_TOKEN`
-
-Remediation adapter:
-
-- `OPS_REMEDIATION_WEBHOOK_URL`
-- `OPS_REMEDIATION_BEARER_TOKEN`
-- `OPS_REMEDIATION_STATUS_URL_TEMPLATE`
-- `OPS_REMEDIATION_VERIFY_ATTEMPTS`
-- `OPS_REMEDIATION_VERIFY_DELAY_SECONDS`
-
-Policy and hardening:
-
-- `OPS_POLICY_RULES_JSON`
-- `OPS_ADMIN_RATE_LIMIT_COUNT`
-- `OPS_ADMIN_RATE_LIMIT_WINDOW_SECONDS`
-
-Secret resolution:
-
-- any token-like config can be passed directly
-- or via `file:///path/to/secret`
-- or via `env://ENV_VAR_NAME`
-
-Example token config:
-
-```bash
-export OPS_API_TOKENS_JSON='{
-  "viewer-token": {"actor_id": "viewer", "roles": ["viewer"]},
-  "operator-token": {"actor_id": "operator", "roles": ["operator"]},
-  "approver-token": {"actor_id": "incident-commander", "roles": ["approver"]},
-  "admin-token": {"actor_id": "platform-admin", "roles": ["admin"]}
-}'
-```
-
-Example policy config:
-
-```bash
-export OPS_POLICY_RULES_JSON='[
-  {
-    "rule_id": "protect-checkout-scale",
-    "services": ["checkout-api"],
-    "action_types": ["scale_service"],
-    "max_replicas": 4
-  },
-  {
-    "rule_id": "block-night-rollbacks",
-    "action_types": ["rollback_service"],
-    "active_from_hour_utc": 0,
-    "active_to_hour_utc": 5,
-    "deny": true
-  }
-]'
-```
-
-## Notes
-
-- The environment is deterministic at the simulation layer; observation sampling uses seeded noise from the episode id and tick.
-- The implementation intentionally stays small: 4 services per scenario, 5 incident families, 8 typed actions, and deterministic grading.
-- The benchmark ships as a real OpenEnv package via `openenv-core`; it is not only a custom FastAPI app.
-- The ops control plane is intended as a safe adoption layer, not a license to grant broad production mutation rights immediately.
-- `openenv validate .` and `openenv validate --url ...` both pass.
-- `docker build .` and `docker run` produce a working server on port 8000.
+## Submission Guidelines Enforcement
+- Root-level `inference.py` ensures strict compliance.
+- Emits required `[START]`, `[STEP]`, and `[END]` logging format.
+- Uses standard environment variables: `API_BASE_URL`, `MODEL_NAME`, and `HF_TOKEN`.

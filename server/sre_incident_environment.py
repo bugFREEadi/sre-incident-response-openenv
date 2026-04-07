@@ -10,7 +10,7 @@ from sre_incident_env.models import (
     SREIncidentObservation,
     SREIncidentState,
 )
-from world import IncidentWorld
+from sre_incident_env.world import IncidentWorld
 
 
 class SREIncidentEnvironment(

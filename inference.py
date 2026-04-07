@@ -27,10 +27,14 @@ SUCCESS_SCORE_THRESHOLD = 0.65
 
 # Credential resolution: prefer HF_TOKEN (required by spec), fall back to
 # OPENAI_API_KEY and the generic API_KEY for evaluators using either convention.
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
+# Real-world API defaults and credential resolution.
+# Read environment variables with defaults where required
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
+if HF_TOKEN is None:
+    raise ValueError("HF_TOKEN environment variable is required")
 
 # ---------------------------------------------------------------------------
 # Mandatory structured logging — spec requires exactly this format, with no
@@ -51,11 +55,12 @@ def log_step(step: int, action: str, reward: float, done: bool, error: str | Non
     )
 
 
-def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
-    # Spec: score=<0.00>, rewards=<r1,r2,...> — no square brackets
+def log_end(success: bool, steps: int, rewards: list[float]) -> None:
+    # Spec: success=<true|false> steps=<n> rewards=<r1,r2,...>
+    # Strictly matching the required format to avoid evaluator parsing errors.
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
         flush=True,
     )
 
@@ -278,10 +283,9 @@ async def run_task(client: OpenAI, base_url: str, task_name: str) -> tuple[float
                 break
 
     # The last reward IS the full grader score (final_score = 0.5*recovery + 0.5*decision).
-    # We clamp to [0, 1] as a safety measure.
     score = max(0.0, min(rewards[-1] if rewards else 0.0, 1.0))
     success = score >= SUCCESS_SCORE_THRESHOLD
-    log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+    log_end(success=success, steps=steps_taken, rewards=rewards)
     return score, rewards
 
 

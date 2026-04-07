@@ -41,7 +41,7 @@ from server.ops_models import (
     utcnow_iso,
 )
 from server.ops_store import OpsStore
-from world import IncidentWorld
+from sre_incident_env.world import IncidentWorld
 
 
 MUTATING_ACTIONS = {

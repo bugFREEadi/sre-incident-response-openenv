@@ -20,10 +20,21 @@ def get_service(world: WorldState, service_name: str) -> ServiceState:
     raise KeyError(f"Unknown service: {service_name}")
 
 
+import random
+
 def set_status_from_metrics(service: ServiceState) -> None:
-    if service.error_rate >= 0.25 or service.latency_p99_ms >= 3500 or service.saturation >= 0.99:
+    # Add small jitter to simulate non-deterministic monitoring observations.
+    # This prevents agents from over-fitting to exact numbers.
+    jitter = random.uniform(-0.02, 0.02)
+    p99_jitter = random.uniform(-10, 10)
+    
+    eff_error = service.error_rate + jitter
+    eff_p99 = service.latency_p99_ms + p99_jitter
+    eff_sat = service.saturation + jitter
+
+    if eff_error >= 0.25 or eff_p99 >= 3500 or eff_sat >= 0.99:
         service.status = "down"
-    elif service.error_rate >= 0.05 or service.latency_p99_ms >= 1000 or service.saturation >= 0.85:
+    elif eff_error >= 0.05 or eff_p99 >= 1000 or eff_sat >= 0.85:
         service.status = "degraded"
     else:
         service.status = "healthy"
