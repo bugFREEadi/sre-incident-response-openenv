@@ -10,8 +10,13 @@ class RewardEngine:
         if cap_decision_score is not None:
             decision = min(decision, cap_decision_score)
         final = 0.5 * recovery + 0.5 * decision
-        # Validator requires scores strictly in (0, 1) — never exactly 0.0 or 1.0
+        
+        # Validator requires ALL score fields strictly in (0, 1) — never exactly 0.0 or 1.0
+        # This applies not just to final_score but also the breakdown metrics
         final = max(0.01, min(final, 0.95))
+        recovery = max(0.01, min(recovery, 0.95))
+        decision = max(0.01, min(decision, 0.95))
+        
         return {
             "recovery_score": round(recovery, 4),
             "decision_score": round(decision, 4),
