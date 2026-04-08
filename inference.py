@@ -262,7 +262,9 @@ async def run_task(client: OpenAI, base_url: str, task_name: str) -> tuple[float
 
             # The environment returns the running grader score at each step;
             # the final step's reward is the definitive episode score.
+            # Validator requires scores strictly in (0, 1) — clip to avoid boundary values
             reward = float(result.reward or 0.0)
+            reward = max(0.001, min(reward, 0.999))
             rewards.append(reward)
             steps_taken = step
             history.append(json.dumps(action_payload, separators=(",", ":")))
