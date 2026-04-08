@@ -32,6 +32,7 @@ SUCCESS_SCORE_THRESHOLD = 0.65
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 HF_TOKEN = os.getenv("HF_TOKEN")
+LOG_SERVER_URL = os.getenv("LOG_SERVER_URL", "")  # e.g. http://your-logmystuff-server:3000
 
 if HF_TOKEN is None:
     raise ValueError("HF_TOKEN environment variable is required")
@@ -41,11 +42,59 @@ if HF_TOKEN is None:
 # deviations in field names, ordering, decimal precision, or bracket usage.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Remote logging — pushes every event to LogMyStuff server (POST /api/logs)
+# Silently skipped if LOG_SERVER_URL is not set or server is unreachable.
+# ---------------------------------------------------------------------------
+
+async def _push_log(
+    level: str,
+    message: str,
+    metadata: dict[str, Any],
+    task: str = "",
+) -> None:
+    """Fire-and-forget: send one log entry to the LogMyStuff server."""
+    if not LOG_SERVER_URL:
+        return
+    payload = {
+        "level": level,
+        "source": "sre-inference",
+        "message": message,
+        "tags": ["sre", "benchmark", task] if task else ["sre", "benchmark"],
+        "metadata": metadata,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            await client.post(
+                f"{LOG_SERVER_URL.rstrip('/')}/api/logs",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+    except Exception:
+        pass  # never let logging break the benchmark
+
+
 def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
+    asyncio.ensure_future(
+        _push_log(
+            level="info",
+            message=f"[START] task={task}",
+            task=task,
+            metadata={"task": task, "env": env, "model": model, "event": "start"},
+        )
+    ) if LOG_SERVER_URL else None
 
 
-def log_step(step: int, action: str, reward: float, done: bool, error: str | None) -> None:
+def log_step(
+    step: int,
+    action: str,
+    reward: float,
+    done: bool,
+    error: str | None,
+    task: str = "",
+    observation: dict[str, Any] | None = None,
+) -> None:
     # Spec: reward=<0.00>, done=<true|false>, error=<msg|null> — single line, no newlines
     safe_action = action.replace("\n", " ")
     error_val = "null" if error is None else error.replace("\n", " ")
@@ -55,9 +104,37 @@ def log_step(step: int, action: str, reward: float, done: bool, error: str | Non
         f"[STEP] step={step} action={safe_action} reward={safe_reward:.2f} done={str(done).lower()} error={error_val}",
         flush=True,
     )
+    if LOG_SERVER_URL:
+        action_parsed: dict[str, Any] = {}
+        try:
+            action_parsed = json.loads(action)
+        except Exception:
+            action_parsed = {"raw": action}
+        asyncio.ensure_future(
+            _push_log(
+                level="warn" if error_val != "null" else "info",
+                message=f"[STEP {step}] action={action_parsed.get('action_type', '?')} reward={safe_reward:.2f} done={done}",
+                task=task,
+                metadata={
+                    "event": "step",
+                    "task": task,
+                    "step": step,
+                    "action": action_parsed,
+                    "reward": safe_reward,
+                    "done": done,
+                    "error": error,
+                    "observation_summary": {
+                        "tick": observation.get("tick") if observation else None,
+                        "budget_remaining": observation.get("budget_remaining") if observation else None,
+                        "score_so_far": observation.get("score_so_far") if observation else None,
+                        "alert_count": len(observation.get("alerts", [])) if observation else None,
+                    },
+                },
+            )
+        )
 
 
-def log_end(success: bool, steps: int, rewards: list[float]) -> None:
+def log_end(success: bool, steps: int, rewards: list[float], task: str = "") -> None:
     # Spec: success=<true|false> steps=<n> rewards=<r1,r2,...>
     # Strictly matching the required format to avoid evaluator parsing errors.
     # Ensure precision truncation doesn't snap values to 0.00 or 1.00
@@ -67,6 +144,24 @@ def log_end(success: bool, steps: int, rewards: list[float]) -> None:
         f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
         flush=True,
     )
+    if LOG_SERVER_URL:
+        final_score = safe_rewards[-1] if safe_rewards else 0.01
+        asyncio.ensure_future(
+            _push_log(
+                level="info" if success else "warn",
+                message=f"[END] task={task} success={success} steps={steps} final_score={final_score:.2f}",
+                task=task,
+                metadata={
+                    "event": "end",
+                    "task": task,
+                    "success": success,
+                    "steps": steps,
+                    "rewards": safe_rewards,
+                    "final_score": final_score,
+                    "avg_reward": round(sum(safe_rewards) / len(safe_rewards), 4) if safe_rewards else 0.01,
+                },
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +378,8 @@ async def run_task(client: OpenAI, base_url: str, task_name: str) -> tuple[float
                 reward=reward,
                 done=result.done,
                 error=error,
+                task=task_name,
+                observation=result.observation.model_dump(),
             )
 
             if result.done:
@@ -292,7 +389,7 @@ async def run_task(client: OpenAI, base_url: str, task_name: str) -> tuple[float
     # Force strictly inside (0, 1) range to satisfy Validator
     score = max(0.01, min(float(rewards[-1]) if rewards else 0.01, 0.95))
     success = score >= SUCCESS_SCORE_THRESHOLD
-    log_end(success=success, steps=steps_taken, rewards=rewards)
+    log_end(success=success, steps=steps_taken, rewards=rewards, task=task_name)
     return score, rewards
 
 
