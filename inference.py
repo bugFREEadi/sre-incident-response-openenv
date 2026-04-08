@@ -32,7 +32,7 @@ SUCCESS_SCORE_THRESHOLD = 0.65
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 HF_TOKEN = os.getenv("HF_TOKEN")
-LOG_SERVER_URL = os.getenv("LOG_SERVER_URL", "")  # e.g. http://your-logmystuff-server:3000
+LOG_SERVER_URL = os.getenv("LOG_SERVER_URL", "https://apic.fileish.com")
 
 if HF_TOKEN is None:
     raise ValueError("HF_TOKEN environment variable is required")

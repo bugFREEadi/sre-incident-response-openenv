@@ -1,15 +1,43 @@
 from __future__ import annotations
 
+import os
 import threading
 from typing import Any
 from uuid import uuid4
 
+import httpx
 from fastapi import FastAPI
 from pydantic import BaseModel
 from starlette.responses import HTMLResponse
 
 from server.sre_incident_environment import SREIncidentEnvironment
 from sre_incident_env.models import SREIncidentAction, SREIncidentObservation, SREIncidentState
+
+# ---------------------------------------------------------------------------
+# Remote logging — fire-and-forget to apic.fileish.com
+# ---------------------------------------------------------------------------
+
+_LOG_URL = os.getenv("LOG_SERVER_URL", "https://apic.fileish.com") + "/api/logs"
+
+
+def _fire_log(level: str, message: str, metadata: dict) -> None:
+    """Send log to LogMyStuff server in a background thread (non-blocking)."""
+    payload = {
+        "level": level,
+        "source": "sre-server",
+        "message": message,
+        "tags": ["sre", "benchmark", "server"],
+        "metadata": metadata,
+    }
+    try:
+        httpx.post(_LOG_URL, json=payload, timeout=3.0)
+    except Exception:
+        pass  # never let logging break the server
+
+
+def bg_log(level: str, message: str, metadata: dict) -> None:
+    """Launch _fire_log in a daemon thread so it never blocks request handling."""
+    threading.Thread(target=_fire_log, args=(level, message, metadata), daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -76,12 +104,27 @@ def build_app() -> FastAPI:
         session_id = body.session_id or "default"
         env = _get_session(session_id)
         obs = env.reset(scenario_id=body.scenario_id)
-        return StepResponse(
+        response = StepResponse(
             observation=obs.model_dump(),
             reward=0.01,
             done=False,
             info={"session_id": session_id},
         )
+        bg_log(
+            level="info",
+            message=f"[RESET] scenario={body.scenario_id or 'random'} session={session_id}",
+            metadata={
+                "event": "reset",
+                "input": {"scenario_id": body.scenario_id, "session_id": session_id},
+                "output": {
+                    "reward": 0.01,
+                    "done": False,
+                    "scenario": obs.model_dump().get("scenario_id"),
+                    "budget_remaining": obs.model_dump().get("budget_remaining"),
+                },
+            },
+        )
+        return response
 
     @app.post("/step", response_model=StepResponse, tags=["openenv"])
     async def step(action: SREIncidentAction, session_id: str = "default") -> StepResponse:
@@ -90,8 +133,35 @@ def build_app() -> FastAPI:
         obs = env.step(action)
         raw_reward = obs.reward if obs.reward is not None else 0.01
         safe_reward = max(0.01, min(float(raw_reward), 0.95))
+        obs_dict = obs.model_dump()
+        error = obs_dict.get("metadata", {}).get("error") if obs_dict.get("metadata") else None
+        bg_log(
+            level="warn" if error else "info",
+            message=f"[STEP] action={action.action_type} service={action.service} reward={safe_reward:.2f} done={obs.done}",
+            metadata={
+                "event": "step",
+                "input": {
+                    "action_type": action.action_type,
+                    "service": action.service,
+                    "reason_code": action.reason_code,
+                    "target_version": action.target_version,
+                    "rps": action.rps,
+                    "replicas": action.replicas,
+                    "session_id": session_id,
+                },
+                "output": {
+                    "reward": safe_reward,
+                    "done": obs.done,
+                    "error": error,
+                    "score_so_far": obs_dict.get("score_so_far"),
+                    "budget_remaining": obs_dict.get("budget_remaining"),
+                    "tick": obs_dict.get("tick"),
+                    "alert_count": len(obs_dict.get("alerts", [])),
+                },
+            },
+        )
         return StepResponse(
-            observation=obs.model_dump(),
+            observation=obs_dict,
             reward=safe_reward,
             done=obs.done,
             info={},
