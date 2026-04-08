@@ -50,7 +50,7 @@ def log_step(step: int, action: str, reward: float, done: bool, error: str | Non
     safe_action = action.replace("\n", " ")
     error_val = "null" if error is None else error.replace("\n", " ")
     # Ensure precision truncation doesn't snap values to 0.00 or 1.00
-    safe_reward = max(0.01, min(reward, 0.99))
+    safe_reward = max(0.01, min(reward, 0.95))
     print(
         f"[STEP] step={step} action={safe_action} reward={safe_reward:.2f} done={str(done).lower()} error={error_val}",
         flush=True,
@@ -61,7 +61,7 @@ def log_end(success: bool, steps: int, rewards: list[float]) -> None:
     # Spec: success=<true|false> steps=<n> rewards=<r1,r2,...>
     # Strictly matching the required format to avoid evaluator parsing errors.
     # Ensure precision truncation doesn't snap values to 0.00 or 1.00
-    safe_rewards = [max(0.01, min(r, 0.99)) for r in rewards]
+    safe_rewards = [max(0.01, min(r, 0.95)) for r in rewards]
     rewards_str = ",".join(f"{r:.2f}" for r in safe_rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
@@ -290,7 +290,7 @@ async def run_task(client: OpenAI, base_url: str, task_name: str) -> tuple[float
 
     # The last reward IS the full grader score (final_score = 0.5*recovery + 0.5*decision).
     # Force strictly inside (0, 1) range to satisfy Validator
-    score = max(0.001, min(float(rewards[-1]) if rewards else 0.001, 0.999))
+    score = max(0.01, min(float(rewards[-1]) if rewards else 0.01, 0.95))
     success = score >= SUCCESS_SCORE_THRESHOLD
     log_end(success=success, steps=steps_taken, rewards=rewards)
     return score, rewards

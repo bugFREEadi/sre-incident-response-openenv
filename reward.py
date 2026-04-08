@@ -11,7 +11,7 @@ class RewardEngine:
             decision = min(decision, cap_decision_score)
         final = 0.5 * recovery + 0.5 * decision
         # Validator requires scores strictly in (0, 1) — never exactly 0.0 or 1.0
-        final = max(0.001, min(final, 0.999))
+        final = max(0.01, min(final, 0.95))
         return {
             "recovery_score": round(recovery, 4),
             "decision_score": round(decision, 4),

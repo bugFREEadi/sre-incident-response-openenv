@@ -58,7 +58,7 @@ class SREIncidentEnvironment:
         reward_breakdown = result.get("reward", {})
         reward_value = float(reward_breakdown.get("final_score", 0.001))
         # Ensure it is strictly inside (0, 1) range
-        reward_value = max(0.001, min(reward_value, 0.999))
+        reward_value = max(0.01, min(reward_value, 0.95))
         self._state.step_count += 1
         self._state.budget_remaining = result["observation"]["budget_remaining"]
         self._state.terminated = result["done"]
