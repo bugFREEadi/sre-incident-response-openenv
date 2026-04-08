@@ -2,9 +2,6 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from openenv_core.env_server.interfaces import Environment
-from openenv_core.env_server.types import EnvironmentMetadata
-
 from sre_incident_env.models import (
     SREIncidentAction,
     SREIncidentObservation,
@@ -13,15 +10,10 @@ from sre_incident_env.models import (
 from sre_incident_env.world import IncidentWorld
 
 
-class SREIncidentEnvironment(
-    Environment[SREIncidentAction, SREIncidentObservation, SREIncidentState]
-):
+class SREIncidentEnvironment:
     """Stateful OpenEnv wrapper around the incident-response simulator."""
 
-    SUPPORTS_CONCURRENT_SESSIONS = True
-
     def __init__(self) -> None:
-        super().__init__()
         self._engine = IncidentWorld()
         self._episode_id: str | None = None
         self._state = SREIncidentState(episode_id=str(uuid4()), step_count=0)
@@ -97,17 +89,6 @@ class SREIncidentEnvironment(
         self._state.declared_root_cause = current_world.declared_root_cause
         self._state.declared_reason_code = current_world.declared_reason_code
         return self._state
-
-    def get_metadata(self) -> EnvironmentMetadata:
-        return EnvironmentMetadata(
-            name="sre_incident_response",
-            description=(
-                "Causal incident-response benchmark where locally obvious remediation "
-                "can worsen the global system state."
-            ),
-            version="0.1.0",
-            documentation_url="https://github.com/meta-pytorch/OpenEnv",
-        )
 
     def _build_observation(
         self,

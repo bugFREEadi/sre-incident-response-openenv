@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from openenv_core.env_server.types import Action, Observation, State
 from pydantic import BaseModel, Field
 
 ServiceStatus = Literal["healthy", "degraded", "down"]
@@ -18,6 +17,32 @@ ActionType = Literal[
     "finish_incident",
 ]
 
+
+# ---------------------------------------------------------------------------
+# Local base classes (previously inherited from openenv_core.env_server.types)
+# ---------------------------------------------------------------------------
+
+class Action(BaseModel):
+    """Base class for all OpenEnv actions."""
+    metadata: dict[str, Any] | None = None
+
+
+class Observation(BaseModel):
+    """Base class for all OpenEnv observations."""
+    reward: float | None = None
+    done: bool = False
+    metadata: dict[str, Any] | None = None
+
+
+class State(BaseModel):
+    """Base class for all OpenEnv states."""
+    episode_id: str
+    step_count: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Domain models
+# ---------------------------------------------------------------------------
 
 class AlertModel(BaseModel):
     id: str
