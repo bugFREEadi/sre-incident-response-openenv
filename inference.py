@@ -49,8 +49,10 @@ def log_step(step: int, action: str, reward: float, done: bool, error: str | Non
     # Spec: reward=<0.00>, done=<true|false>, error=<msg|null> — single line, no newlines
     safe_action = action.replace("\n", " ")
     error_val = "null" if error is None else error.replace("\n", " ")
+    # Ensure precision truncation doesn't snap values to 0.00 or 1.00
+    safe_reward = max(0.01, min(reward, 0.99))
     print(
-        f"[STEP] step={step} action={safe_action} reward={reward:.2f} done={str(done).lower()} error={error_val}",
+        f"[STEP] step={step} action={safe_action} reward={safe_reward:.2f} done={str(done).lower()} error={error_val}",
         flush=True,
     )
 
@@ -58,7 +60,9 @@ def log_step(step: int, action: str, reward: float, done: bool, error: str | Non
 def log_end(success: bool, steps: int, rewards: list[float]) -> None:
     # Spec: success=<true|false> steps=<n> rewards=<r1,r2,...>
     # Strictly matching the required format to avoid evaluator parsing errors.
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    # Ensure precision truncation doesn't snap values to 0.00 or 1.00
+    safe_rewards = [max(0.01, min(r, 0.99)) for r in rewards]
+    rewards_str = ",".join(f"{r:.2f}" for r in safe_rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
         flush=True,
