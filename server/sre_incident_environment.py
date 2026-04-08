@@ -38,7 +38,7 @@ class SREIncidentEnvironment:
         )
         return self._build_observation(
             result["observation"],
-            reward=0.0,
+            reward=0.001,
             done=False,
         )
 
@@ -56,7 +56,9 @@ class SREIncidentEnvironment:
         result = self._engine.step(self._episode_id, payload)
         current_world = self._engine._get_world(self._episode_id)
         reward_breakdown = result.get("reward", {})
-        reward_value = float(reward_breakdown.get("final_score", 0.0))
+        reward_value = float(reward_breakdown.get("final_score", 0.001))
+        # Ensure it is strictly inside (0, 1) range
+        reward_value = max(0.001, min(reward_value, 0.999))
         self._state.step_count += 1
         self._state.budget_remaining = result["observation"]["budget_remaining"]
         self._state.terminated = result["done"]

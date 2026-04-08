@@ -285,7 +285,8 @@ async def run_task(client: OpenAI, base_url: str, task_name: str) -> tuple[float
                 break
 
     # The last reward IS the full grader score (final_score = 0.5*recovery + 0.5*decision).
-    score = max(0.0, min(rewards[-1] if rewards else 0.0, 1.0))
+    # Force strictly inside (0, 1) range to satisfy Validator
+    score = max(0.001, min(float(rewards[-1]) if rewards else 0.001, 0.999))
     success = score >= SUCCESS_SCORE_THRESHOLD
     log_end(success=success, steps=steps_taken, rewards=rewards)
     return score, rewards

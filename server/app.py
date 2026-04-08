@@ -78,7 +78,7 @@ def build_app() -> FastAPI:
         obs = env.reset(scenario_id=body.scenario_id)
         return StepResponse(
             observation=obs.model_dump(),
-            reward=0.0,
+            reward=0.001,
             done=False,
             info={"session_id": session_id},
         )
