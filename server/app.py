@@ -88,9 +88,11 @@ def build_app() -> FastAPI:
         """Take one action in the environment."""
         env = _get_session(session_id)
         obs = env.step(action)
+        raw_reward = obs.reward if obs.reward is not None else 0.01
+        safe_reward = max(0.01, min(float(raw_reward), 0.95))
         return StepResponse(
             observation=obs.model_dump(),
-            reward=obs.reward,
+            reward=safe_reward,
             done=obs.done,
             info={},
         )

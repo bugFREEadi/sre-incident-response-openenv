@@ -35,6 +35,13 @@ class ObservationBuilder:
             tail = rng.sample(tail, 8)
             tail.sort(key=lambda line: (line.tick, line.service))
 
+        # Clamp all numeric scores in score_so_far to strictly (0.01, 0.95)
+        # to ensure no boundary value leaks through to the validator
+        safe_score_so_far = {
+            k: max(0.01, min(0.95, float(v))) if isinstance(v, (int, float)) else v
+            for k, v in score_so_far.items()
+        }
+
         return Observation(
             episode_id=world.episode_id,
             tick=world.tick,
@@ -43,5 +50,5 @@ class ObservationBuilder:
             alerts=list(world.active_alerts),
             recent_logs=tail,
             deploy_history=world.deploy_history[-10:],
-            score_so_far=score_so_far,
+            score_so_far=safe_score_so_far,
         )

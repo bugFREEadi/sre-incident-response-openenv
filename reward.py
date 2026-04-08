@@ -28,7 +28,7 @@ class RewardEngine:
         time_factor = max(0.0, 1 - (world.tick / max(world.max_budget, 1.0)))
         residual = 1 - self._residual_degradation(world)
         score = (0.5 * slo_restored) + (0.25 * time_factor) + (0.25 * residual)
-        return max(0.0, min(1.0, score))
+        return max(0.01, min(0.95, score))
 
     def decision_score(self, world: WorldState) -> float:
         root_cause_correct = 1.0 if world.declared_root_cause == world.root_cause_service else 0.0
@@ -52,7 +52,7 @@ class RewardEngine:
             + (0.10 * investigate_before_act)
             - (0.02 * late_steps)
         )
-        return max(0.0, min(1.0, score))
+        return max(0.01, min(0.95, score))
 
     def _slos_restored(self, world: WorldState) -> bool:
         return all(
