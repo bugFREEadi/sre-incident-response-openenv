@@ -38,7 +38,7 @@ class ObservationBuilder:
         # Clamp all numeric scores in score_so_far to strictly (0.01, 0.95)
         # to ensure no boundary value leaks through to the validator
         safe_score_so_far = {
-            k: max(0.01, min(0.95, float(v))) if isinstance(v, (int, float)) else v
+            k: max(0.01, min(0.99, float(v))) if isinstance(v, (int, float)) else v
             for k, v in score_so_far.items()
         }
 

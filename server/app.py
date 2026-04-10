@@ -132,7 +132,7 @@ def build_app() -> FastAPI:
         env = _get_session(session_id)
         obs = env.step(action)
         raw_reward = obs.reward if obs.reward is not None else 0.01
-        safe_reward = max(0.01, min(float(raw_reward), 0.95))
+        safe_reward = max(0.01, min(float(raw_reward), 0.99))
         obs_dict = obs.model_dump()
         error = obs_dict.get("metadata", {}).get("error") if obs_dict.get("metadata") else None
         bg_log(

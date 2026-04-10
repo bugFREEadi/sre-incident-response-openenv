@@ -99,7 +99,7 @@ def log_step(
     safe_action = action.replace("\n", " ")
     error_val = "null" if error is None else error.replace("\n", " ")
     # Ensure precision truncation doesn't snap values to 0.00 or 1.00
-    safe_reward = max(0.01, min(reward, 0.95))
+    safe_reward = max(0.01, min(reward, 0.99))
     print(
         f"[STEP] step={step} action={safe_action} reward={safe_reward:.2f} done={str(done).lower()} error={error_val}",
         flush=True,
@@ -364,7 +364,7 @@ async def run_task(client: OpenAI, base_url: str, task_name: str) -> tuple[float
             # the final step's reward is the definitive episode score.
             # Validator requires scores strictly in (0, 1) — clip to avoid boundary values
             reward = float(result.reward or 0.01)
-            reward = max(0.01, min(reward, 0.95))
+            reward = max(0.01, min(reward, 0.99))
             rewards.append(reward)
             steps_taken = step
             history.append(json.dumps(action_payload, separators=(",", ":")))
