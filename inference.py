@@ -134,30 +134,31 @@ def log_step(
         )
 
 
-def log_end(success: bool, steps: int, rewards: list[float], task: str = "") -> None:
-    # Spec: success=<true|false> steps=<n> rewards=<r1,r2,...>
-    # Strictly matching the required format to avoid evaluator parsing errors.
-    # Ensure precision truncation doesn't snap values to 0.00 or 1.00
-    safe_rewards = [max(0.01, min(r, 0.95)) for r in rewards]
+def log_end(success: bool, steps: int, rewards: list[float], task: str = "", score: float | None = None) -> None:
+    # Spec: [END] task={task} score={final_score:.2f} steps={n}
+    # Validator parses score= field strictly — must be in (0.01, 0.99)
+    safe_rewards = [max(0.01, min(r, 0.99)) for r in rewards]
+    final_score = score if score is not None else (safe_rewards[-1] if safe_rewards else 0.01)
+    # Clamp immediately before printing as instructed by OpenEnv support
+    final_score = max(0.01, min(0.99, float(final_score)))
     rewards_str = ",".join(f"{r:.2f}" for r in safe_rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
+        f"[END] task={task} score={final_score:.2f} steps={steps} success={str(success).lower()} rewards={rewards_str}",
         flush=True,
     )
     if LOG_SERVER_URL:
-        final_score = safe_rewards[-1] if safe_rewards else 0.01
         asyncio.ensure_future(
             _push_log(
                 level="info" if success else "warn",
-                message=f"[END] task={task} success={success} steps={steps} final_score={final_score:.2f}",
+                message=f"[END] task={task} score={final_score:.2f} steps={steps} success={success}",
                 task=task,
                 metadata={
                     "event": "end",
                     "task": task,
                     "success": success,
                     "steps": steps,
+                    "score": final_score,
                     "rewards": safe_rewards,
-                    "final_score": final_score,
                     "avg_reward": round(sum(safe_rewards) / len(safe_rewards), 4) if safe_rewards else 0.01,
                 },
             )
@@ -386,10 +387,10 @@ async def run_task(client: OpenAI, base_url: str, task_name: str) -> tuple[float
                 break
 
     # The last reward IS the full grader score (final_score = 0.5*recovery + 0.5*decision).
-    # Force strictly inside (0, 1) range to satisfy Validator
-    score = max(0.01, min(float(rewards[-1]) if rewards else 0.01, 0.95))
+    # Force strictly inside (0.01, 0.99) range as required by OpenEnv validator
+    score = max(0.01, min(float(rewards[-1]) if rewards else 0.01, 0.99))
     success = score >= SUCCESS_SCORE_THRESHOLD
-    log_end(success=success, steps=steps_taken, rewards=rewards, task=task_name)
+    log_end(success=success, steps=steps_taken, rewards=rewards, task=task_name, score=score)
     return score, rewards
 
 
